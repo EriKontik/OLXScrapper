@@ -33,7 +33,7 @@ def load_dictionary(filename):
         return {}
 
 
-loaded_dict = load_dictionary("sold_items_fx6100.pkl")
+loaded_dict = load_dictionary("sold_items_iPhone7.pkl")
 
 for key, value in loaded_dict.items():
     print(value["name"])

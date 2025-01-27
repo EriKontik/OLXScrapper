@@ -7,15 +7,18 @@ from rich.console import Console
 import pickle
 from tqdm.auto import tqdm
 import time
+import os
 console = Console()
+
+global_var_pages_to_search = 0
 
 ###Functions are here
 
 #Main loop that parses the pages and puts together the dictionary
-def main_loop(htmls, pages_to_search, product_category):
+def main_loop(htmls, product_category):
 
     #Variables Needed
-    pages_scrapped = 0
+    
     links = []
     prices = []
     dates = []
@@ -24,11 +27,6 @@ def main_loop(htmls, pages_to_search, product_category):
 
     #Main loop - Parsing, Putting it together into a dcitionary is there
     for html in tqdm(htmls):
-
-        #How many pages were scrapped so far
-        pages_scrapped += 1
-        print(f"Scrapping page {pages_scrapped}/{pages_to_search}")
-
         #Make a request to the page
         html = safe_request(html)
         
@@ -36,88 +34,73 @@ def main_loop(htmls, pages_to_search, product_category):
         soup = BeautifulSoup(html, 'html.parser')
         #get the product cards
         product_cards = soup.findAll(class_="css-l9drzq")
-
-
         #Iterating through a list of product cards
         for product_card in product_cards:
-
-            #Check if the product is an add
-            ad = product_card.find(class_=ad_tag)
-            if(ad):
-                console.print("[bold red]Ad found, skipping the product[/bold red]")
-                continue
-            
-                
-
             # Product Name
             name_element = product_card.find(class_=product_name_tag)
-            #get the name of the product
-            if name_element:
-                product_name = name_element.text
-                product_names.append(product_name)
-            else:
+
+            is_ad = product_card.find(class_=ad_tag)
+            if(is_ad):
+                continue
+            if not name_element:
                 print("Product name not found")
-                continue  # Skip this product if essential details are missing
+                continue  # Skip if essential details are missing
             
-            #get ID of the product
+            product_name = name_element.text
+
+            # Product ID
             id = product_card.get("id")
-            if id:
-                ids.append(id)
+            if not id:
+                print("Product ID not found")
+                continue
 
-            # get the link to the product
+            # Link
             link_element = product_card.find(class_=link_tag)
-            if link_element:
-                link = "https://www.olx.ua/" + link_element.get('href')
-                links.append(link)
-            else:
-                print("Link not found")
+            if not link_element or not link_element.get('href'):
+                print("Product link not found")
                 continue
+            link = "https://www.olx.ua/" + link_element.get('href')
 
-            # get the price of the product
+            # Price
             price_element = product_card.find(class_=price_tag)
-            if price_element:
-                price = price_element.text
-                prices.append(price)
-            else:
-                print("Price not found")
+            if not price_element:
+                print("Product price not found")
                 continue
+            price = price_element.text
 
-            # get the date of the product
+            # Date
             date_element = product_card.find(class_=date_tag)
-            if date_element:
-                #Get the text of the date
-                date = date_element.text
-
-                #Split the date into parts city and date
-                date_f = date.split(" - ")
-                
-                #Split the date into months, days and years
-                parts = date_f[1].split(" ")
-                if len(parts) == 4:
-                    day = parts[0]
-                    #Map the month to the number
-                    month = month_map[parts[1]]
-                    year = parts[2]
-                    #Format the date as dd.mm.yyyy #NOTE zfill(2) here means that no matter if the date is 5
-                    #it will still be 05
-                    formatted_date = f"{day.zfill(2)}.{month}.{year}"
-                    dates.append(formatted_date)
-
-                #if the date is today the length of it will be 3 so it will just get the current date    
-                elif len(parts) == 3:
-                    dates.append(datetime.datetime.now().strftime("%d.%m.%Y"))
-
-            
+            if not date_element:
+                print("Product date not found")
+                continue
+            date = date_element.text
+            date_f = date.split(" - ")
+            parts = date_f[1].split(" ") if len(date_f) > 1 else []
+            if len(parts) == 4:
+                day = parts[0]
+                month = month_map[parts[1]]
+                year = parts[2]
+                formatted_date = f"{day.zfill(2)}.{month}.{year}"
+            elif len(parts) == 3:
+                formatted_date = datetime.datetime.now().strftime("%d.%m.%Y")
             else:
-                print("Date not found")
-        print(f"Arrays length:{len(prices)}")
+                formatted_date = "Unknown"
 
+            # Append to all lists together
+            product_names.append(product_name)
+            ids.append(id)
+            links.append(link)
+            prices.append(price)
+            dates.append(formatted_date)
 
     #Clean everything except numbers and find the avg price
-    prices = [int(re.sub(r'\D', '', price)) for price in prices]
+    prices = [
+        int(re.sub(r'\D', '', price)) if re.sub(r'\D', '', price) else 0
+        for price in prices
+    ]
     price_avg = sum(prices) / len(prices) if prices else 0
 
-
+    print(len(product_names), len(ids), len(prices), len(links), len(dates))
     # Initialize the dictionary with unique keys
     products_dictionary = {}
     for index in range(len(product_names)):
@@ -128,13 +111,13 @@ def main_loop(htmls, pages_to_search, product_category):
             "date": dates[index]
         }
 
-    # Clean up the dicitonary 
-    products_dictionary = filter_price(products_dictionary, 1000)
-    profitable_products = get_potentially_profitable_products(products_dictionary, price_avg)
+
+    #=======================================================
+    #FROM NOW ON ITS PROCESSING HTE DATA WE GOT
 
     #Print all products
-    for product_id, product in products_dictionary.items():
-        console.print(f"[bold red]Product ID:[/bold red][bold cyan]{product_id}[/bold cyan]\nName: {product['name']}\nPrice: {product['price']}\nLink: [click here]{product['link']}\nDate: {product['date']}\n\n")
+    # for product_id, product in products_dictionary.items():
+    #     console.print(f"[bold red]Product ID:[/bold red][bold cyan]{product_id}[/bold cyan]\nName: {product['name']}\nPrice: {product['price']}\nLink: [click here]{product['link']}\nDate: {product['date']}\n\n")
 
 
 
@@ -150,36 +133,28 @@ def main_loop(htmls, pages_to_search, product_category):
     #Load dictionary to later compare what products were sold 
     loaded_dictionary = load_dictionary(f"data_all_time_{product_category}.pkl")
 
-    #getting the ids of the items that were sold
-    sold_items_ids = find_sold_items(ids_old=loaded_dictionary.keys(), ids=products_dictionary.keys())
+    # Getting the ids of the items that were sold
+    sold_items_ids = find_sold_items(list(loaded_dictionary.keys()), list(products_dictionary.keys()))
 
-    #Print sold items out 
-    if not sold_items_ids:
-        console.print("[bold green]No items were sold![/bold green]")
-    else:
-        for item_id, item_value in loaded_dictionary.items():
-            if item_id in sold_items_ids:
-                # Check if the item exists in the new dictionary but with a different ID
-                for new_id, new_value in products_dictionary.items():
-                    if is_same_product(item_value, new_value):
-                        console.print(f"[bold yellow]Item {item_id} might have been reuploaded with a new ID ({new_id})[/bold yellow]")
-                        break
-                else:
-                    console.print(f"[bold red]Item {item_id} has been sold![/bold red]")
-                    console.print(f"Name of the item: {item_value['name']}")
-                    console.print(f"Link to the item: {item_value['link']}")
-                    console.print(f"Price of the item: {item_value['price']}")
-                    console.print(f"Date of the item: {item_value['date']}")
-                    console.print("\n\n")
-
-    #Using ids we got before turn the sold items ids into a dictionary
     sold_items_dict = {}
-    for item_id in sold_items_ids:
-        if item_id in loaded_dictionary:
-            sold_items_dict[item_id] = loaded_dictionary[item_id]
+    for sold_id in sold_items_ids:
+        if sold_id in loaded_dictionary:
+            sold_items_dict[sold_id] = loaded_dictionary[sold_id]
 
-    #Print if the dictionaries are the same
-    print(loaded_dictionary == products_dictionary)
+    for key in tqdm(list(sold_items_dict.keys())):
+        try:
+            status = requests.get(sold_items_dict[key]['link']).status_code
+        except:
+            status = 404
+
+        if status == 200:
+            del sold_items_dict[key]
+        else:
+            break
+
+    # Print out all the sold items
+    for sold_id, sold_item in sold_items_dict.items():
+        console.print(f"[bold red]Sold Product ID:[/bold red][bold cyan]{sold_id}[/bold cyan]\nName: {sold_item['name']}\nPrice: {sold_item['price']}\nLink: [click here]{sold_item['link']}\nDate: {sold_item['date']}\n\n")
 
     # Here we try to create a "database" of the sold items, we load the dictionary
     loaded_sold_items = load_dictionary(f"sold_items_{product_category}.pkl")
@@ -190,34 +165,21 @@ def main_loop(htmls, pages_to_search, product_category):
         console.print("[bold orange]No sold items found in the file.[/bold orange]")
 
 
-    #Print the profitable products    
-    if profitable_products:
-        for item_id, item_value in profitable_products.items():
-            console.print(f"[bold green]Item ID{item_id}[/bold green]")
-            console.print(f"Name of the item: {item_value['name']}")
-            console.print(f"Price of the item: {item_value['price']}")
-            console.print(f"Potential profit: {int(price_avg) - item_value['price']}")
-            console.print(f"Link to the item: {item_value['link']}")
-            console.print(f"Date of the item: {item_value['date']}")
-            console.print("\n\n")
-    else:
-        console.print(f"['bold red']No profitable products found![/bold red']")
+    data_to_send = {key: value for key, value in products_dictionary.items() if key not in loaded_dictionary}
+    for key, value in data_to_send.items():
+        console.print(f"[bold red]Product ID:[/bold red][bold cyan]{key}[/bold cyan]\nName: {value['name']}\nPrice: {value['price']}\nLink: [click here]{value['link']}\nDate: {value['date']}\n\n")
+
+    save_dictionary(data_to_send, f"data_to_send_{product_category}.pkl")
+    from tg_bot import startup_tg
+    startup_tg(product_category)
 
     # Save the data to a files
-    save_dictionary(profitable_products, filename=f"profitable_items_{product_category}.pkl")
+    
     save_dictionary(sold_items_dict, filename=f"sold_items_{product_category}.pkl")
     save_dictionary(products_dictionary, filename=f"data_all_time_{product_category}.pkl")
     console.print("[bold green]Program ended succesfully![/bold green]")
 
-# Function to filter out products with price too high 
-def filter_price(products, max_price):
-    filtered_products = {}
-    for key, value in products.items():
-        if value['price'] < max_price:
-            filtered_products[key] = value
-    return filtered_products
-            
-
+          
 # Function to get potentially profitable products
 def get_potentially_profitable_products(products, avg_price):
     profitable_products = {}
@@ -226,26 +188,31 @@ def get_potentially_profitable_products(products, avg_price):
             profitable_products[key] = value
     return profitable_products
 #Getting the number of pages
-def get_pages(link, links):
+def get_pages(link, max_price, min_price):
+    #Modify link to acount for the fact that we have a min and a max price
+    link = link + f"?currency=UAH&search%5Bfilter_float_price%3Afrom%5D={min_price}&search%5Bfilter_float_price%3Ato%5D={max_price}"
+    links = []
+    links.append(link)
     text_page = safe_request(link)
     soup = BeautifulSoup(text_page, 'html.parser')
     pages = soup.findAll(class_=last_page)
     if pages:
-        pages_to_search = int(pages[-1].text)
+        global_var_pages_to_search = int(pages[-1].text)
     else:
         print("No pagination found, defaulting to 1 page.")
-        pages_to_search = 1
-    for i in range(pages_to_search-1):
-        links.append(link_power_suply_450W+f"?page={i+2}")
+        global_var_pages_to_search = 1
+    for i in range(global_var_pages_to_search-1):
+        #https://www.olx.ua/uk/list/q-Iphone-7/?page=2&search%5Bfilter_float_price%3Afrom%5D=700
+        links.append(link + f"?page={i+2}?currency=UAH&search%5Bfilter_float_price%3Afrom%5D={min_price}&search%5Bfilter_float_price%3Ato%5D={max_price}")
 
-    return pages_to_search
 
+    
+    return links
 # Function to check if two products are the same
 def is_same_product(item1, item2):
     """Compare two products and check if they are the same except for the price."""
     fields_to_compare = ['name', 'link', 'date']
     return all(item1.get(field) == item2.get(field) for field in fields_to_compare)
-
 def find_sold_items(ids_old, ids):
     """
     Find the items that were sold between the old and new data.
@@ -258,7 +225,6 @@ def find_sold_items(ids_old, ids):
     - list of str: A list of IDs that were sold between the old and new data.
     """
     return list(set(ids_old) - set(ids))
-
 # Function to save a dictionary to a file
 def save_dictionary(data, filename="data_all_time"):
     """
@@ -271,7 +237,6 @@ def save_dictionary(data, filename="data_all_time"):
     with open(filename, 'wb') as file:
         pickle.dump(data, file)
     print(f"Dictionary saved to {filename}.")
-
 # Function to load a dictionary from a file
 def load_dictionary(filename):
     """
@@ -304,21 +269,6 @@ def load_dictionary(filename):
     except pickle.UnpicklingError:
         print(f"Failed to unpickle data from {filename}. Returning an empty dictionary.")
         return {}
-# Function to start the logic of the program
-def start_logic():
-    
-    pages_to_search = input('Enter link or one of the numbers \n1-Power Suply(general)\n2-Power Suply PC\n3 - Power suply 450w\n')
-    if(pages_to_search == "1"):
-        link_to_category = "https://www.olx.ua/uk/list/q-%D0%91%D0%BB%D0%BE%D0%BA-%D0%B6%D0%B8%D0%B2%D0%BB%D0%B5%D0%BD%D0%BD%D1%8F"
-    elif(pages_to_search == "2"):
-        link_to_category = "https://www.olx.ua/uk/list/q-%D0%9A%D0%BE%D0%BC%D0%BF'%D1%8E%D1%82%D0%B5%D1%80%D0%BD%D0%B8%D0%B9-%D0%B1%D0%BB%D0%BE%D0%BA-%D0%B6%D0%B8%D0%B2%D0%BB%D0%B5%D0%BD%D0%BD%D1%8F/"
-    elif(pages_to_search == "3"):
-        link_to_category = "https://www.olx.ua/uk/elektronika/kompyutery-i-komplektuyuschie/komplektuyuschie-i-aksesuary/q-%D0%B1%D0%BB%D0%BE%D0%BA-%D0%B6%D0%B8%D0%B2%D0%BB%D0%B5%D0%BD%D0%BD%D1%8F-450w/?currency=UAH"
-    else:
-        link_to_category = pages_to_search
-
-    return link_to_category
-
 # Function to safely make a request to a URL
 def safe_request(url):
     try:
@@ -349,33 +299,63 @@ headers = {
 }
 
 ad_tag = "css-1dyfc0k"
-link_tag = "css-qo0cxu"
-price_tag = "css-13afqrm"
-date_tag = "css-1mwdrlh"
-product_name_tag = "css-1s3qyje"
+link_tag = "css-qo0cxu" #+
+price_tag = "css-6j1qjp" #+
+date_tag = "css-1mwdrlh" #+ 
+product_name_tag = "css-1sq4ur2"
 rating_tag = "css-1pkf64r"
 deleveries = "css-18icqaw"
-last_page = "css-ps94ux"
+last_page = "css-1mi714g"
 #averages
 price_avg = 0
-#Links to store the links to the product pages 
-
-power_suply_450W_htmls = []
-fx6100_htmls = []
-#Get the site html
-link_power_suply_450W = 'https://www.olx.ua/uk/elektronika/kompyutery-i-komplektuyuschie/komplektuyuschie-i-aksesuary/q-%D0%B1%D0%BB%D0%BE%D0%BA-%D0%B6%D0%B8%D0%B2%D0%BB%D0%B5%D0%BD%D0%BD%D1%8F-450w/?currency=UAH'
-link_fx6100 = 'https://www.olx.ua/uk/elektronika/kompyutery-i-komplektuyuschie/komplektuyuschie-i-aksesuary/q-fx6100/?currency=UAH&search%5Bfilter_enum_subcategory%5D%5B0%5D=protsessory'
-
-#Get the first page
-fx6100_htmls.append(link_fx6100)
-power_suply_450W_htmls.append(link_power_suply_450W)
 
 
-pages_to_search_power_suply_450W = get_pages(link_power_suply_450W, power_suply_450W_htmls)
-pages_to_search_fx6100 =  get_pages(link_fx6100, fx6100_htmls)
-#Loop through the pages
+def save_last_search(link, savefile_name, max_price, min_price):
+    last_search = {
+        "link": link,
+        "savefile_name": savefile_name,
+        "max_price": max_price,
+        "min_price": min_price
+    }
+    with open("last_search.pkl", "wb") as file:
+        pickle.dump(last_search, file)
 
+def load_last_search():
+    if os.path.exists("last_search.pkl"):
+        with open("last_search.pkl", "rb") as file:
+            return pickle.load(file)
+    return None
 
-while True:
-    main_loop(power_suply_450W_htmls, pages_to_search_power_suply_450W, "power_suply_450W")
-    time.sleep(300)
+def main():
+    last_search = load_last_search()
+    if last_search:
+        use_last = input("Do you want to use the last search parameters? (yes/no) ").strip().lower()
+        if use_last == "yes":
+            link = last_search["link"]
+            savefile_name = last_search["savefile_name"]
+            max_price = last_search["max_price"]
+            min_price = last_search["min_price"]
+        else:
+            link = input("Enter a link ")
+            savefile_name = input("Enter save file name ")
+            max_price = int(input("Enter max price "))
+            min_price = int(input("Enter lowest price "))
+            save_last_search(link, savefile_name, max_price, min_price)
+    else:
+        link = input("Enter a link ")
+        savefile_name = input("Enter save file name ")
+        max_price = int(input("Enter max price "))
+        min_price = int(input("Enter lowest price "))
+        save_last_search(link, savefile_name, max_price, min_price)
+
+    pages = get_pages(link, max_price, min_price)
+
+    while True:
+        main_loop(htmls=pages, product_category=savefile_name)
+        time.sleep(300)
+
+if __name__ == "__main__":
+    main()
+
+    
+
